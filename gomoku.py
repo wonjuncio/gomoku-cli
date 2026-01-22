@@ -7,7 +7,7 @@
 # Controls:
 #   - Enter move as: "x y"  (1..15)
 #   - Or "h8" / "H8" style: letter (A-O) then number (1-15), e.g. H8
-#   - Commands: /state, /quit, /help
+#   - Commands: /swap, /restart, /undo, /quit, /help
 
 import argparse
 import os
@@ -89,15 +89,14 @@ def board_to_text(board):
         row = []
         for x in range(1, SIZE+1):
             c = board[y-1][x-1]
-            if c == "B":
-                row.append(" X")
-            elif c == "W":
+            if c == "O":
                 row.append(" O")
+            elif c == "X":
+                row.append(" X")
             else:
                 row.append(" .")
         out.append(str(y).rjust(3) + " " + "".join(row))
     out.append("")
-    out.append("Input: 'x y' (e.g. 8 8) or 'H8' (A-O + 1-15).  Commands: /state /restart /undo /quit /help")
     return "\n".join(out)
 
 
@@ -155,12 +154,13 @@ class ClientConn:
 
 def run_host(port: int):
     board = [["." for _ in range(SIZE)] for _ in range(SIZE)]
-    turn = "B"  # B starts
+    turn = "O"  # O starts (first player)
     move_no = 0
     game_over = False
     move_history = []  # List of (x, y, color) for undo
+    game_started = False  # Track if game has started
 
-    # connections: host acts as player B locally; remote is W
+    # connections: host acts as player O locally; remote is X
     remote = None
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -187,14 +187,14 @@ def run_host(port: int):
         return
     remote.name = kv.get("name", "Player")
 
-    # send WELCOME + MATCH + initial STATE
+    # send WELCOME + MATCH + initial TURN
     remote.ls.send_line(fmt("WELCOME", v="1", id="remote", role="GUEST"))
-    remote.ls.send_line(fmt("MATCH", color="W", size=str(SIZE), win=str(WIN)))
+    remote.ls.send_line(fmt("MATCH", color="X", size=str(SIZE), win=str(WIN)))
     remote.ls.send_line(fmt("TURN", color=turn))
 
-    # host local player details
-    my_color = "B"
-    opp_color = "W"
+    # host local player details (O = first player, X = second player)
+    my_color = "O"
+    opp_color = "X"
     my_name = "Host"
     opp_name = remote.name
 
@@ -220,12 +220,12 @@ def run_host(port: int):
         for y in range(1, SIZE+1):
             for x in range(1, SIZE+1):
                 c = board[y-1][x-1]
-                if c in ("B", "W"):
+                if c in ("O", "X"):
                     remote.ls.send_line(fmt("STONE", x=str(x), y=str(y), color=c))
         remote.ls.send_line(fmt("TURN", color=turn))
 
     def apply_move(x, y, color):
-        nonlocal move_no, turn, game_over, move_history
+        nonlocal move_no, turn, game_over, move_history, game_started
         if game_over:
             return False, ("GAME_OVER", "game already finished")
         if color != turn:
@@ -236,6 +236,7 @@ def run_host(port: int):
             return False, ("OCCUPIED", "already occupied")
         board[y-1][x-1] = color
         move_no += 1
+        game_started = True  # Game has started after first move
         move_history.append((x, y, color))  # Save move for undo
         # broadcast OK
         remote.ls.send_line(fmt("OK", move=str(move_no), x=str(x), y=str(y), color=color))
@@ -245,21 +246,22 @@ def run_host(port: int):
             remote.ls.send_line(fmt("WIN", color=color, x=str(x), y=str(y)))
             return True, None
         # next turn
-        turn = "W" if turn == "B" else "B"
+        turn = "X" if turn == "O" else "O"
         remote.ls.send_line(fmt("TURN", color=turn))
         return True, None
     
     def reset_game():
-        nonlocal board, turn, move_no, game_over, move_history
+        nonlocal board, turn, move_no, game_over, move_history, game_started
         board = [["." for _ in range(SIZE)] for _ in range(SIZE)]
-        turn = "B"
+        turn = "O"
         move_no = 0
         game_over = False
+        game_started = False
         move_history = []
         broadcast_state()
     
     def undo_last_move():
-        nonlocal board, turn, move_no, game_over, move_history
+        nonlocal board, turn, move_no, game_over, move_history, game_started
         if len(move_history) < 2:
             return False, "Need at least 2 moves to undo"
         # Remove last two moves (one from each player)
@@ -273,9 +275,10 @@ def run_host(port: int):
         if move_history:
             # Last move in history determines whose turn it is
             last_color = move_history[-1][2]
-            turn = "W" if last_color == "B" else "B"
+            turn = "X" if last_color == "O" else "O"
         else:
-            turn = "B"  # Back to start
+            turn = "O"  # Back to start
+            game_started = False
         game_over = False  # Reset win state
         broadcast_state()
         return True, None
@@ -293,7 +296,7 @@ def run_host(port: int):
                 turn_indicator = ">>> OPP TURN <<<"
         else:
             turn_indicator = "GAME OVER"
-        print(f"{turn_indicator}   You: X   Opponent: O ({opp_name})")
+        print(f"{turn_indicator}   You: O   Opponent: X ({opp_name})")
         if game_over:
             print("GAME OVER. /quit to exit.")
 
@@ -330,13 +333,21 @@ def run_host(port: int):
                     status = f"[OPP MOVE] {x},{y}"
                     with render_lock:
                         render(status)
-                elif cmd == "STATE":
-                    broadcast_state()
                 elif cmd == "SAY":
                     # optional chat
                     status = f"[CHAT] {opp_name}: {kv.get('text','')}"
                     with render_lock:
                         render(status)
+                elif cmd == "SWAP":
+                    # Swap colors
+                    if not game_started:
+                        my_color, opp_color = opp_color, my_color
+                        turn = my_color  # Current player's turn
+                        remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
+                        remote.ls.send_line(fmt("TURN", color=turn))
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                        with render_lock:
+                            render(status)
                 elif cmd == "RESTART_REQUEST":
                     pending_request = "restart"
                     status = f"[REQUEST] {opp_name} wants to RESTART. Type 'y' to accept or 'n' to decline: "
@@ -435,8 +446,6 @@ def run_host(port: int):
                                 render(status)
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
-                        elif cmd == "STATE":
-                            broadcast_state()
                         elif cmd == "SAY":
                             status = f"[CHAT] {opp_name}: {kv.get('text','')}"
                             with render_lock:
@@ -500,16 +509,26 @@ def run_host(port: int):
                 pass
             break
         if parsed == "/help":
-            status = "Moves: 'x y' or 'H8'. Commands: /state /restart /undo /quit /help"
+            help_cmds = "/swap /restart /undo /quit /help"
+            if game_started:
+                help_cmds = "/restart /undo /quit /help"
+            status = f"Input: 'x y' (e.g. 8 8) or 'H8' (A-O + 1-15).\nCommands: {help_cmds}"
             with render_lock:
                 render(status)
             continue
-        if parsed == "/state":
-            status = "[STATE] resent to opponent."
-            try:
-                broadcast_state()
-            except Exception:
-                status = "[STATE] failed (opponent disconnected?)"
+        if parsed == "/swap":
+            if game_started:
+                status = "[ERR] /swap is only available before the game starts."
+                with render_lock:
+                    render(status)
+                continue
+            # Swap colors
+            my_color, opp_color = opp_color, my_color
+            turn = my_color  # Current player's turn
+            remote.ls.send_line(fmt("SWAP"))
+            remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
+            remote.ls.send_line(fmt("TURN", color=turn))
+            status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
             with render_lock:
                 render(status)
             continue
@@ -641,6 +660,7 @@ def run_join(host: str, port: int, name: str):
     game_over = False
     move_no = 0
     move_history = []  # List of (x, y, color) for undo
+    game_started = False  # Track if game has started
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((host, port))
@@ -676,8 +696,8 @@ def run_join(host: str, port: int, name: str):
             you_stone = "?"
             opp_stone = "?"
         else:
-            you_stone = "X" if my_color == "B" else "O"
-            opp_stone = "O" if my_color == "B" else "X"
+            you_stone = "O" if my_color == "O" else "X"
+            opp_stone = "X" if my_color == "O" else "O"
             if not game_over:
                 if turn == my_color:
                     turn_indicator = ">>> YOUR TURN <<<"
@@ -696,24 +716,27 @@ def run_join(host: str, port: int, name: str):
     pending_request = None  # "restart" or "undo" when waiting for y/n response
 
     def apply_ok(x, y, color):
-        nonlocal move_no, move_history
+        nonlocal move_no, move_history, game_started
         if in_bounds(x, y):
             board[y-1][x-1] = color
             move_history.append((x, y, color))  # Save move for undo
         move_no += 1
+        if move_no > 0:
+            game_started = True
     
     def reset_game():
-        nonlocal board, turn, move_no, game_over, move_history
+        nonlocal board, turn, move_no, game_over, move_history, game_started
         board = [["." for _ in range(SIZE)] for _ in range(SIZE)]
-        turn = "B"  # B starts
+        turn = "O"  # O starts
         move_no = 0
         game_over = False
+        game_started = False
         move_history = []
-        # Request state from host
-        ls.send_line("STATE\n")
+        # Request board state from host
+        ls.send_line(fmt("BOARD", size=str(SIZE)))
     
     def undo_last_move():
-        nonlocal board, turn, move_no, game_over, move_history
+        nonlocal board, turn, move_no, game_over, move_history, game_started
         if len(move_history) < 2:
             return False, "Need at least 2 moves to undo"
         # Remove last two moves (one from each player)
@@ -723,8 +746,10 @@ def run_join(host: str, port: int, name: str):
                 board[y-1][x-1] = "."
                 move_no -= 1
         # Reset turn - request state from host to sync
+        if move_no == 0:
+            game_started = False
         game_over = False  # Reset win state
-        ls.send_line("STATE\n")
+        ls.send_line(fmt("BOARD", size=str(SIZE)))
         return True, None
 
     while True:
@@ -740,10 +765,17 @@ def run_join(host: str, port: int, name: str):
                     break
                 cmd, kv = parse_line(l)
                 if cmd == "MATCH":
-                    my_color = kv.get("color", "W")
-                    status = f"[MATCH] You are {'Black(B)' if my_color=='B' else 'White(W)'}"
+                    my_color = kv.get("color", "X")
+                    status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
                     with render_lock:
                         render()
+                elif cmd == "SWAP":
+                    if my_color:
+                        my_color = "O" if my_color == "X" else "X"
+                        turn = my_color
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                        with render_lock:
+                            render()
                 elif cmd == "TURN":
                     turn = kv.get("color")
                     with render_lock:
@@ -863,10 +895,19 @@ def run_join(host: str, port: int, name: str):
                             break
                         cmd, kv = parse_line(l)
                         if cmd == "MATCH":
-                            my_color = kv.get("color", "W")
-                            status = f"[MATCH] You are {'Black(B)' if my_color=='B' else 'White(W)'}"
+                            my_color = kv.get("color", "X")
+                            status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
                             with render_lock:
                                 render()
+                        elif cmd == "SWAP":
+                            if my_color:
+                                my_color = "O" if my_color == "X" else "X"
+                                turn = my_color
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                                with render_lock:
+                                    render()
+                                print("> ", end="", flush=True)
+                                print(input_buffer, end="", flush=True)
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
                         elif cmd == "TURN":
@@ -948,10 +989,19 @@ def run_join(host: str, port: int, name: str):
                             break
                         cmd, kv = parse_line(l)
                         if cmd == "MATCH":
-                            my_color = kv.get("color", "W")
-                            status = f"[MATCH] You are {'Black(B)' if my_color=='B' else 'White(W)'}"
+                            my_color = kv.get("color", "X")
+                            status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
                             with render_lock:
                                 render()
+                        elif cmd == "SWAP":
+                            if my_color:
+                                my_color = "O" if my_color == "X" else "X"
+                                turn = my_color
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                                with render_lock:
+                                    render()
+                                print("> ", end="", flush=True)
+                                print(input_buffer, end="", flush=True)
                         elif cmd == "TURN":
                             turn = kv.get("color")
                             with render_lock:
@@ -1033,13 +1083,26 @@ def run_join(host: str, port: int, name: str):
         if parsed == "/quit":
             break
         if parsed == "/help":
-            status = "Moves: 'x y' or 'H8'. Commands: /state /restart /undo /quit /help"
+            help_cmds = "/swap /restart /undo /quit /help"
+            if game_started:
+                help_cmds = "/restart /undo /quit /help"
+            status = f"Moves: 'x y' or 'H8'. Commands: {help_cmds}"
             with render_lock:
                 render()
             continue
-        if parsed == "/state":
-            ls.send_line("STATE\n")
-            status = "[STATE] requested from host."
+        if parsed == "/swap":
+            if game_started:
+                status = "[ERR] /swap is only available before the game starts."
+                with render_lock:
+                    render()
+                continue
+            if my_color is None:
+                status = "[ERR] Not connected yet. Wait for match to start."
+                with render_lock:
+                    render()
+                continue
+            ls.send_line(fmt("SWAP"))
+            status = "[SWAP] Request sent to host. Waiting for response..."
             with render_lock:
                 render()
             continue
