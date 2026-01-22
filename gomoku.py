@@ -333,30 +333,26 @@ def run_host(port: int, renju_rules: bool = True):
         move_history = []
         broadcast_state()
     
-    def undo_last_move():
+    def undo_last_move(requesting_color):
         nonlocal board, turn, move_no, game_over, move_history, game_started
-        if len(move_history) < 2:
-            return False, "Need at least 2 moves to undo"
-        # Remove last two moves (one from each player)
-        for _ in range(2):
-            if move_history:
-                x, y, color = move_history.pop()
-                board[y-1][x-1] = "."
-                move_no -= 1
-        # Reset turn to the player who should move next
-        # If we had 2 moves, we go back to the first player's turn
-        if move_history:
-            # Last move in history determines whose turn it is
-            last_color = move_history[-1][2]
-            turn = "X" if last_color == "O" else "O"
-        else:
-            turn = "O"  # Back to start
-            game_started = False
+        if not move_history:
+            return False, "No moves to undo"
+        # Check if last move belongs to the requester
+        last_x, last_y, last_color = move_history[-1]
+        if last_color != requesting_color:
+            return False, "Can only undo your own last move"
+        # Remove only the last move (1 move)
+        x, y, color = move_history.pop()
+        board[y-1][x-1] = "."
+        move_no -= 1
+        # Turn goes back to the requester
+        turn = requesting_color
         game_over = False  # Reset win state
         broadcast_state()
         return True, None
 
     def render(status_line=""):
+        nonlocal show_commands
         clear_screen()
         print(board_to_text(board))
         if status_line:
@@ -372,9 +368,18 @@ def run_host(port: int, renju_rules: bool = True):
         print(f"{turn_indicator}   You: O   Opponent: X ({opp_name})")
         if game_over:
             print("GAME OVER. /quit to exit.")
+        # Show commands list only on first render
+        if show_commands:
+            help_cmds = "/swap /restart /undo /quit /help"
+            if game_started:
+                help_cmds = "/restart /undo /quit /help"
+            print(f"\nCommands: {help_cmds}")
+            print("Input: 'x y' (e.g. 8 8) or 'H8' (A-O + 1-15)")
 
     status = ""
+    show_commands = True  # Show commands list on first render
     render()
+    show_commands = False  # Don't show commands list after first render
     
     # Render lock for thread safety
     render_lock = threading.Lock()
@@ -436,14 +441,21 @@ def run_host(port: int, renju_rules: bool = True):
                     with render_lock:
                         render(status)
                 elif cmd == "UNDO_REQUEST":
+                    requesting_color = kv.get("color", opp_color)
+                    # Verify that last move belongs to the requester
+                    if not move_history or move_history[-1][2] != requesting_color:
+                        remote.ls.send_line(fmt("ERR", code="INVALID_UNDO", msg="Last move is not yours"))
+                        continue
                     pending_request = "undo"
+                    pending_undo_color = requesting_color
                     status = f"[REQUEST] {opp_name} wants to UNDO last move. Type 'y' to accept or 'n' to decline: "
                     with render_lock:
                         render(status)
                 elif cmd == "UNDO_RESPONSE":
                     response = kv.get("response", "n").lower()
                     if response == "y":
-                        ok, err = undo_last_move()
+                        requesting_color = kv.get("color", opp_color)
+                        ok, err = undo_last_move(requesting_color)
                         if ok:
                             status = "[UNDO] Last move undone!"
                         else:
@@ -544,7 +556,14 @@ def run_host(port: int, renju_rules: bool = True):
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
                         elif cmd == "UNDO_REQUEST":
+                            requesting_color = kv.get("color", opp_color)
+                            if not move_history or move_history[-1][2] != requesting_color:
+                                remote.ls.send_line(fmt("ERR", code="INVALID_UNDO", msg="Last move is not yours"))
+                                print("> ", end="", flush=True)
+                                print(input_buffer, end="", flush=True)
+                                continue
                             pending_request = "undo"
+                            pending_undo_color = requesting_color
                             status = f"[REQUEST] {opp_name} wants to UNDO last move. Type 'y' to accept or 'n' to decline: "
                             with render_lock:
                                 render(status)
@@ -580,9 +599,10 @@ def run_host(port: int, renju_rules: bool = True):
                     else:
                         status = f"[RESTART] You declined restart request."
                 elif pending_request == "undo":
-                    remote.ls.send_line(fmt("UNDO_RESPONSE", response=response))
+                    undo_color = pending_undo_color if pending_undo_color else opp_color
+                    remote.ls.send_line(fmt("UNDO_RESPONSE", response=response, color=undo_color))
                     if response == "y":
-                        ok, err = undo_last_move()
+                        ok, err = undo_last_move(undo_color)
                         if ok:
                             status = "[UNDO] Last move undone!"
                         else:
@@ -590,6 +610,7 @@ def run_host(port: int, renju_rules: bool = True):
                     else:
                         status = f"[UNDO] You declined undo request."
                 pending_request = None
+                pending_undo_color = None
                 with render_lock:
                     render(status)
                 continue
@@ -678,12 +699,19 @@ def run_host(port: int, renju_rules: bool = True):
                 with render_lock:
                     render(status)
                 continue
-            if len(move_history) < 2:
-                status = "[ERR] Need at least 2 moves to undo."
+            if not game_started or not move_history:
+                status = "[ERR] No moves to undo."
                 with render_lock:
                     render(status)
                 continue
-            remote.ls.send_line(fmt("UNDO_REQUEST"))
+            # Check if last move belongs to the requester
+            last_x, last_y, last_color = move_history[-1]
+            if last_color != my_color:
+                status = "[ERR] Can only undo your own last move."
+                with render_lock:
+                    render(status)
+                continue
+            remote.ls.send_line(fmt("UNDO_REQUEST", color=my_color))
             status = "[UNDO] Request sent to opponent. Waiting for response..."
             with render_lock:
                 render(status)
@@ -702,7 +730,7 @@ def run_host(port: int, renju_rules: bool = True):
                     if cmd == "UNDO_RESPONSE":
                         response = kv.get("response", "n").lower()
                         if response == "y":
-                            ok, err = undo_last_move()
+                            ok, err = undo_last_move(my_color)
                             if ok:
                                 status = "[UNDO] Last move undone!"
                             else:
@@ -807,11 +835,14 @@ def run_join(host: str, port: int, name: str):
         if game_over:
             print("GAME OVER. /quit to exit.")
 
+    show_commands = True  # Show commands list on first render
     render()
+    show_commands = False  # Don't show commands list after first render
     
     # Render lock for thread safety
     render_lock = threading.Lock()
     pending_request = None  # "restart" or "undo" when waiting for y/n response
+    pending_undo_color = None  # Color of player requesting undo
 
     def apply_ok(x, y, color):
         nonlocal move_no, move_history, game_started
@@ -833,19 +864,20 @@ def run_join(host: str, port: int, name: str):
         # Request board state from host
         ls.send_line(fmt("BOARD", size=str(SIZE)))
     
-    def undo_last_move():
+    def undo_last_move(requesting_color):
         nonlocal board, turn, move_no, game_over, move_history, game_started
-        if len(move_history) < 2:
-            return False, "Need at least 2 moves to undo"
-        # Remove last two moves (one from each player)
-        for _ in range(2):
-            if move_history:
-                x, y, color = move_history.pop()
-                board[y-1][x-1] = "."
-                move_no -= 1
-        # Reset turn - request state from host to sync
-        if move_no == 0:
-            game_started = False
+        if not move_history:
+            return False, "No moves to undo"
+        # Check if last move belongs to the requester
+        last_x, last_y, last_color = move_history[-1]
+        if last_color != requesting_color:
+            return False, "Can only undo your own last move"
+        # Remove only the last move (1 move)
+        x, y, color = move_history.pop()
+        board[y-1][x-1] = "."
+        move_no -= 1
+        # Turn goes back to the requester
+        turn = requesting_color
         game_over = False  # Reset win state
         ls.send_line(fmt("BOARD", size=str(SIZE)))
         return True, None
@@ -928,14 +960,21 @@ def run_join(host: str, port: int, name: str):
                     with render_lock:
                         render()
                 elif cmd == "UNDO_REQUEST":
+                    requesting_color = kv.get("color", "X")
+                    # Verify that last move belongs to the requester
+                    if not move_history or move_history[-1][2] != requesting_color:
+                        ls.send_line(fmt("ERR", code="INVALID_UNDO", msg="Last move is not yours"))
+                        continue
                     pending_request = "undo"
+                    pending_undo_color = requesting_color
                     status = f"[REQUEST] Host wants to UNDO last move. Type 'y' to accept or 'n' to decline: "
                     with render_lock:
                         render()
                 elif cmd == "UNDO_RESPONSE":
                     response = kv.get("response", "n").lower()
                     if response == "y":
-                        ok, err = undo_last_move()
+                        requesting_color = kv.get("color", my_color)
+                        ok, err = undo_last_move(requesting_color)
                         if ok:
                             status = "[UNDO] Last move undone!"
                         else:
@@ -1064,7 +1103,14 @@ def run_join(host: str, port: int, name: str):
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
                         elif cmd == "UNDO_REQUEST":
+                            requesting_color = kv.get("color", "X")
+                            if not move_history or move_history[-1][2] != requesting_color:
+                                ls.send_line(fmt("ERR", code="INVALID_UNDO", msg="Last move is not yours"))
+                                print("> ", end="", flush=True)
+                                print(input_buffer, end="", flush=True)
+                                continue
                             pending_request = "undo"
+                            pending_undo_color = requesting_color
                             status = f"[REQUEST] Host wants to UNDO last move. Type 'y' to accept or 'n' to decline: "
                             with render_lock:
                                 render()
@@ -1187,9 +1233,10 @@ def run_join(host: str, port: int, name: str):
                     else:
                         status = "[RESTART] You declined restart request."
                 elif pending_request == "undo":
-                    ls.send_line(fmt("UNDO_RESPONSE", response=response))
+                    undo_color = pending_undo_color if pending_undo_color else "X"
+                    ls.send_line(fmt("UNDO_RESPONSE", response=response, color=undo_color))
                     if response == "y":
-                        ok, err = undo_last_move()
+                        ok, err = undo_last_move(undo_color)
                         if ok:
                             status = "[UNDO] Last move undone!"
                         else:
@@ -1197,6 +1244,7 @@ def run_join(host: str, port: int, name: str):
                     else:
                         status = "[UNDO] You declined undo request."
                 pending_request = None
+                pending_undo_color = None
                 with render_lock:
                     render()
                 continue
@@ -1281,12 +1329,19 @@ def run_join(host: str, port: int, name: str):
                 with render_lock:
                     render()
                 continue
-            if len(move_history) < 2:
-                status = "[ERR] Need at least 2 moves to undo."
+            if not game_started or not move_history:
+                status = "[ERR] No moves to undo."
                 with render_lock:
                     render()
                 continue
-            ls.send_line(fmt("UNDO_REQUEST"))
+            # Check if last move belongs to the requester
+            last_x, last_y, last_color = move_history[-1]
+            if last_color != my_color:
+                status = "[ERR] Can only undo your own last move."
+                with render_lock:
+                    render()
+                continue
+            ls.send_line(fmt("UNDO_REQUEST", color=my_color))
             status = "[UNDO] Request sent to host. Waiting for response..."
             with render_lock:
                 render()
@@ -1305,7 +1360,8 @@ def run_join(host: str, port: int, name: str):
                     if cmd == "UNDO_RESPONSE":
                         response = kv.get("response", "n").lower()
                         if response == "y":
-                            ok, err = undo_last_move()
+                            requesting_color = kv.get("color", my_color)
+                            ok, err = undo_last_move(requesting_color)
                             if ok:
                                 status = "[UNDO] Last move undone!"
                             else:
