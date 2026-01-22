@@ -55,7 +55,7 @@ def fmt(cmd: str, **kv):
 def in_bounds(x, y):
     return 1 <= x <= SIZE and 1 <= y <= SIZE
 
-def check_win(board, x, y, stone):
+def check_win(board, x, y, stone, renju_rules=False):
     # board indexed [y-1][x-1]
     dirs = [(1,0),(0,1),(1,1),(1,-1)]
     for dx, dy in dirs:
@@ -72,9 +72,74 @@ def check_win(board, x, y, stone):
             count += 1
             nx -= dx
             ny -= dy
-        if count >= WIN:
-            return True
+        if renju_rules:
+            if count == WIN:  # Exactly 5
+                return True
+        else:
+            if count >= WIN:
+                return True
     return False
+
+def count_line(board, x, y, stone, dx, dy):
+    """Count consecutive stones in one direction"""
+    count = 1
+    # Forward
+    nx, ny = x + dx, y + dy
+    while in_bounds(nx, ny) and board[ny-1][nx-1] == stone:
+        count += 1
+        nx += dx
+        ny += dy
+    forward_end_x, forward_end_y = nx, ny
+    
+    # Backward
+    nx, ny = x - dx, y - dy
+    while in_bounds(nx, ny) and board[ny-1][nx-1] == stone:
+        count += 1
+        nx -= dx
+        ny -= dy
+    backward_end_x, backward_end_y = nx, ny
+    
+    # Check if line is open (both ends are empty)
+    forward_open = in_bounds(forward_end_x, forward_end_y) and board[forward_end_y-1][forward_end_x-1] == "."
+    backward_open = in_bounds(backward_end_x, backward_end_y) and board[backward_end_y-1][backward_end_x-1] == "."
+    is_open = forward_open and backward_open
+    
+    return count, is_open
+
+def check_forbidden_move(board, x, y, stone, renju_rules):
+    """Check if move violates renju rules (6+, 33, 44)"""
+    if not renju_rules:
+        return True, None
+    
+    # Temporarily place stone
+    board[y-1][x-1] = stone
+    
+    dirs = [(1,0),(0,1),(1,1),(1,-1)]
+    open_threes = 0
+    open_fours = 0
+    has_six_or_more = False
+    
+    for dx, dy in dirs:
+        count, is_open = count_line(board, x, y, stone, dx, dy)
+        
+        if count >= 6:
+            has_six_or_more = True
+        elif count == 3 and is_open:
+            open_threes += 1
+        elif count == 4 and is_open:
+            open_fours += 1
+    
+    # Remove temporary stone
+    board[y-1][x-1] = "."
+    
+    if has_six_or_more:
+        return False, "FORBIDDEN: 6+ in a row (장목 금지)"
+    if open_threes >= 2:
+        return False, "FORBIDDEN: Double three (33 금지)"
+    if open_fours >= 2:
+        return False, "FORBIDDEN: Double four (44 금지)"
+    
+    return True, None
 
 def clear_screen():
     # CMD-friendly
@@ -152,7 +217,7 @@ class ClientConn:
     ls: LineSocket
     name: str = "Player"
 
-def run_host(port: int):
+def run_host(port: int, renju_rules: bool = True):
     board = [["." for _ in range(SIZE)] for _ in range(SIZE)]
     turn = "O"  # O starts (first player)
     move_no = 0
@@ -226,6 +291,7 @@ def run_host(port: int):
 
     def apply_move(x, y, color):
         nonlocal move_no, turn, game_over, move_history, game_started
+        # renju_rules is accessible via closure
         if game_over:
             return False, ("GAME_OVER", "game already finished")
         if color != turn:
@@ -234,6 +300,13 @@ def run_host(port: int):
             return False, ("OUT_OF_RANGE", "x/y must be 1..15")
         if board[y-1][x-1] != ".":
             return False, ("OCCUPIED", "already occupied")
+        
+        # Check renju rules (only for first player O)
+        if renju_rules and color == "O":
+            ok, msg = check_forbidden_move(board, x, y, color, renju_rules)
+            if not ok:
+                return False, ("FORBIDDEN_MOVE", msg)
+        
         board[y-1][x-1] = color
         move_no += 1
         game_started = True  # Game has started after first move
@@ -241,7 +314,7 @@ def run_host(port: int):
         # broadcast OK
         remote.ls.send_line(fmt("OK", move=str(move_no), x=str(x), y=str(y), color=color))
         # check win
-        if check_win(board, x, y, color):
+        if check_win(board, x, y, color, renju_rules):
             game_over = True
             remote.ls.send_line(fmt("WIN", color=color, x=str(x), y=str(y)))
             return True, None
@@ -1240,6 +1313,7 @@ def main():
 
     ap_host = sub.add_parser("host")
     ap_host.add_argument("--port", type=int, default=33333)
+    ap_host.add_argument("--renju", action=argparse.BooleanOptionalAction, default=True, help="Enable renju rules (default: True)")
 
     ap_join = sub.add_parser("join")
     ap_join.add_argument("--host", required=True)
@@ -1249,7 +1323,7 @@ def main():
     args = ap.parse_args()
 
     if args.mode == "host":
-        run_host(args.port)
+        run_host(args.port, args.renju)
     else:
         run_join(args.host, args.port, args.name)
 
