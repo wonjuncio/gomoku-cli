@@ -920,8 +920,6 @@ def run_join(host: str, port: int, name: str):
         game_over = False
         game_started = False
         move_history = []
-        # Request board state from host
-        ls.send_line(fmt("BOARD", size=str(SIZE)))
     
     def undo_last_move(requesting_color):
         nonlocal board, turn, move_no, game_over, move_history, game_started
