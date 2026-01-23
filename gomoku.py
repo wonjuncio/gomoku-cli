@@ -281,6 +281,25 @@ class GameState:
             for x in range(SIZE):
                 self.board[y][x] = "."
         self.move_history = []
+    
+    def swap_colors(self):
+        """Swap all stone colors on the board (O <-> X)"""
+        for y in range(SIZE):
+            for x in range(SIZE):
+                if self.board[y][x] == "O":
+                    self.board[y][x] = "X"
+                elif self.board[y][x] == "X":
+                    self.board[y][x] = "O"
+        
+        # Update move_history colors
+        new_history = []
+        for x, y, color in self.move_history:
+            new_color = "X" if color == "O" else "O"
+            new_history.append((x, y, new_color))
+        self.move_history = new_history
+        
+        # Swap turn
+        self.turn = "X" if self.turn == "O" else "O"
 
 # ---------------- Input Handler ----------------
 
@@ -374,7 +393,6 @@ class GomokuSession(ABC):
         self.q_in: queue.Queue = queue.Queue()
         self.render_lock = threading.Lock()
         self.status = ""
-        self.show_commands = True
         self.pending_request: Optional[str] = None
         self.pending_undo_color: Optional[str] = None
         self.my_color: Optional[str] = None
@@ -451,13 +469,6 @@ class GomokuSession(ABC):
         
         if self.state.game_over:
             print("GAME OVER. /restart or /quit")
-        
-        if self.show_commands:
-            help_cmds = "/swap /restart /undo /quit /help"
-            if self.state.game_started:
-                help_cmds = "/restart /undo /quit /help"
-            print(f"\nCommands: {help_cmds}")
-            print("Input: 'x y' (e.g. 8 8) or 'H8' (A-O + 1-15)")
     
     def handle_pending_request(self, s: str) -> bool:
         """Handle pending y/n request. Returns True if handled."""
@@ -493,6 +504,7 @@ class GomokuSession(ABC):
         self.send_message(fmt("SWAP_RESPONSE", response=response))
         if response == "y":
             self.my_color, self.opp_color = self.opp_color, self.my_color
+            self.state.swap_colors()  # Swap all stones on board
             self.state.turn = self.opp_color  # Turn goes to requester
             self.status = f"[SWAP] Colors swapped. You are now {self.my_color}. Turn: {self.state.turn}"
         else:
@@ -589,7 +601,8 @@ class GomokuSession(ABC):
         response = kv.get("response", "n").lower()
         if response == "y":
             self.my_color, self.opp_color = self.opp_color, self.my_color
-            self.state.turn = self.my_color
+            self.state.swap_colors()  # Swap all stones on board
+            self.state.turn = self.my_color  # Turn goes to requester (me)
             self.status = f"[SWAP] Colors swapped. You are now {self.my_color}. Turn: {self.state.turn}"
         else:
             self.status = f"[SWAP] {self.opp_name} declined swap request."
@@ -711,7 +724,6 @@ class GomokuSession(ABC):
         
         self.start_receiver_thread()
         self.render()
-        self.show_commands = False
         
         input_handler = InputHandler(self.q_in, self._on_message_during_input)
         
@@ -928,7 +940,8 @@ class HostSession(GomokuSession):
         response = kv.get("response", "n").lower()
         if response == "y":
             self.my_color, self.opp_color = self.opp_color, self.my_color
-            self.state.turn = self.my_color
+            self.state.swap_colors()  # Swap all stones on board
+            self.state.turn = self.my_color  # Turn goes to requester (me)
             self.ls.send_line(fmt("MATCH", color=self.opp_color, size=str(SIZE), win=str(WIN)))
             self.ls.send_line(fmt("TURN", color=self.state.turn))
             self.status = f"[SWAP] Colors swapped. You are now {self.my_color}. Turn: {self.state.turn}"
@@ -1039,14 +1052,32 @@ class GuestSession(GomokuSession):
         self.sock: Optional[socket.socket] = None
     
     def setup_connection(self) -> bool:
-        """Connect to host"""
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.host, self.port))
-        self.ls = LineSocket(self.sock)
+        """Connect to host, retrying until host is available"""
+        print(f"[GUEST] Connecting to {self.host}:{self.port}...")
+        print("[GUEST] Waiting for host to start server...")
         
-        # Send HELLO
-        self.ls.send_line(fmt("HELLO", v="1", name=self.my_name))
-        return True
+        retry_count = 0
+        while True:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.settimeout(2)  # 2 second timeout for connection attempt
+                self.sock.connect((self.host, self.port))
+                self.sock.settimeout(None)  # Remove timeout after successful connection
+                self.ls = LineSocket(self.sock)
+                
+                # Send HELLO
+                self.ls.send_line(fmt("HELLO", v="1", name=self.my_name))
+                print(f"[GUEST] Connected to host!")
+                return True
+            except (ConnectionRefusedError, OSError, socket.timeout) as e:
+                retry_count += 1
+                # Print status every 5 attempts (about every 10 seconds)
+                if retry_count % 5 == 0:
+                    print(f"[GUEST] Still waiting for host... (attempt {retry_count})")
+                time.sleep(2)  # Wait 2 seconds before retrying
+            except Exception as e:
+                print(f"[GUEST] Connection error: {e}")
+                return False
     
     def send_message(self, msg: str):
         """Send message to host"""
@@ -1080,8 +1111,6 @@ class GuestSession(GomokuSession):
             if self.pending_request == "swap":
                 self.status = f"[SWAP] Colors swapped. You are now {self.my_color}."
                 self.pending_request = None
-            else:
-                self.status = f"[MATCH] You are {'O (first)' if self.my_color=='O' else 'X (second)'}"
             with self.render_lock:
                 self.render(self.status)
         elif cmd == "TURN":
@@ -1138,7 +1167,8 @@ class GuestSession(GomokuSession):
             if response == "y":
                 self.my_color = "O" if self.my_color == "X" else "X"
                 self.opp_color = "X" if self.my_color == "O" else "O"
-                self.state.turn = self.my_color
+                self.state.swap_colors()  # Swap all stones on board
+                self.state.turn = self.my_color  # Turn goes to requester (me)
                 self.status = f"[SWAP] Colors swapped. You are now {self.my_color}. Turn: {self.state.turn}"
             else:
                 self.status = f"[SWAP] {self.opp_name} declined swap request."
