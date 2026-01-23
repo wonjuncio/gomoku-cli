@@ -367,7 +367,7 @@ def run_host(port: int, renju_rules: bool = True):
             turn_indicator = "GAME OVER"
         print(f"{turn_indicator}   You: O   Opponent: X ({opp_name})")
         if game_over:
-            print("GAME OVER. /quit to exit.")
+            print("GAME OVER. /restart or /quit")
         # Show commands list only on first render
         if show_commands:
             help_cmds = "/swap /restart /undo /quit /help"
@@ -716,11 +716,6 @@ def run_host(port: int, renju_rules: bool = True):
                     response_received = True
             continue
         if parsed == "/restart":
-            if game_over:
-                status = "[ERR] Game is over. Cannot restart."
-                with render_lock:
-                    render(status)
-                continue
             remote.ls.send_line(fmt("RESTART_REQUEST"))
             status = "[RESTART] Request sent to opponent. Waiting for response..."
             with render_lock:
@@ -897,7 +892,7 @@ def run_join(host: str, port: int, name: str):
                 turn_indicator = "GAME OVER"
         print(f"{turn_indicator}   You: {you_stone}   Opponent: {opp_stone}")
         if game_over:
-            print("GAME OVER. /quit to exit.")
+            print("GAME OVER. /restart or /quit")
 
     show_commands = True  # Show commands list on first render
     render()
@@ -1444,11 +1439,6 @@ def run_join(host: str, port: int, name: str):
                     response_received = True
             continue
         if parsed == "/restart":
-            if game_over:
-                status = "[ERR] Game is over. Cannot restart."
-                with render_lock:
-                    render()
-                continue
             ls.send_line(fmt("RESTART_REQUEST"))
             status = "[RESTART] Request sent to host. Waiting for response..."
             with render_lock:
