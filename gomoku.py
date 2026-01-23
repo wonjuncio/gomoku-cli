@@ -416,16 +416,27 @@ def run_host(port: int, renju_rules: bool = True):
                     status = f"[CHAT] {opp_name}: {kv.get('text','')}"
                     with render_lock:
                         render(status)
-                elif cmd == "SWAP":
-                    # Swap colors
-                    if not game_started:
+                elif cmd == "SWAP_REQUEST":
+                    if game_started:
+                        remote.ls.send_line(fmt("ERR", code="GAME_STARTED", msg="Cannot swap after game started"))
+                        continue
+                    pending_request = "swap"
+                    status = f"[REQUEST] {opp_name} wants to SWAP colors. Type 'y' to accept or 'n' to decline: "
+                    with render_lock:
+                        render(status)
+                elif cmd == "SWAP_RESPONSE":
+                    response = kv.get("response", "n").lower()
+                    if response == "y":
+                        # Swap colors and turn (requesting player's side)
                         my_color, opp_color = opp_color, my_color
-                        turn = my_color  # Current player's turn
+                        turn = my_color  # Turn goes to the player who requested swap
                         remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
                         remote.ls.send_line(fmt("TURN", color=turn))
-                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
-                        with render_lock:
-                            render(status)
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                    else:
+                        status = f"[SWAP] {opp_name} declined swap request."
+                    with render_lock:
+                        render(status)
                 elif cmd == "RESTART_REQUEST":
                     pending_request = "restart"
                     status = f"[REQUEST] {opp_name} wants to RESTART. Type 'y' to accept or 'n' to decline: "
@@ -537,17 +548,33 @@ def run_host(port: int, renju_rules: bool = True):
                                 render(status)
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
-                        elif cmd == "SWAP":
-                            if not game_started:
-                                my_color, opp_color = opp_color, my_color
-                                turn = my_color
-                                remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
-                                remote.ls.send_line(fmt("TURN", color=turn))
-                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
-                                with render_lock:
-                                    render(status)
+                        elif cmd == "SWAP_REQUEST":
+                            if game_started:
+                                remote.ls.send_line(fmt("ERR", code="GAME_STARTED", msg="Cannot swap after game started"))
                                 print("> ", end="", flush=True)
                                 print(input_buffer, end="", flush=True)
+                                continue
+                            pending_request = "swap"
+                            status = f"[REQUEST] {opp_name} wants to SWAP colors. Type 'y' to accept or 'n' to decline: "
+                            with render_lock:
+                                render(status)
+                            print("> ", end="", flush=True)
+                            print(input_buffer, end="", flush=True)
+                        elif cmd == "SWAP_RESPONSE":
+                            response = kv.get("response", "n").lower()
+                            if response == "y":
+                                # Swap colors and turn
+                                my_color, opp_color = opp_color, my_color
+                                turn = my_color  # Turn goes to the player who requested swap
+                                remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
+                                remote.ls.send_line(fmt("TURN", color=turn))
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                            else:
+                                status = f"[SWAP] {opp_name} declined swap request."
+                            with render_lock:
+                                render(status)
+                            print("> ", end="", flush=True)
+                            print(input_buffer, end="", flush=True)
                         elif cmd == "RESTART_REQUEST":
                             pending_request = "restart"
                             status = f"[REQUEST] {opp_name} wants to RESTART. Type 'y' to accept or 'n' to decline: "
@@ -591,7 +618,16 @@ def run_host(port: int, renju_rules: bool = True):
             s_lower = s.strip().lower()
             if s_lower in ("y", "yes", "n", "no"):
                 response = "y" if s_lower in ("y", "yes") else "n"
-                if pending_request == "restart":
+                if pending_request == "swap":
+                    remote.ls.send_line(fmt("SWAP_RESPONSE", response=response))
+                    if response == "y":
+                        # Swap colors and turn
+                        my_color, opp_color = opp_color, my_color
+                        turn = opp_color  # Turn goes to the player who requested swap (opponent)
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                    else:
+                        status = f"[SWAP] You declined swap request."
+                elif pending_request == "restart":
                     remote.ls.send_line(fmt("RESTART_RESPONSE", response=response))
                     if response == "y":
                         reset_game()
@@ -641,15 +677,43 @@ def run_host(port: int, renju_rules: bool = True):
                 with render_lock:
                     render(status)
                 continue
-            # Swap colors
-            my_color, opp_color = opp_color, my_color
-            turn = my_color  # Current player's turn
-            remote.ls.send_line(fmt("SWAP"))
-            remote.ls.send_line(fmt("MATCH", color=opp_color, size=str(SIZE), win=str(WIN)))
-            remote.ls.send_line(fmt("TURN", color=turn))
-            status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+            remote.ls.send_line(fmt("SWAP_REQUEST"))
+            status = "[SWAP] Request sent to opponent. Waiting for response..."
             with render_lock:
                 render(status)
+            # Wait for response
+            response_received = False
+            while not response_received:
+                try:
+                    l = q_in.get(timeout=30)  # 30 second timeout
+                    if l is None:
+                        status = "[DISCONNECTED] Opponent left."
+                        game_over = True
+                        with render_lock:
+                            render(status)
+                        break
+                    cmd, kv = parse_line(l)
+                    if cmd == "SWAP_RESPONSE":
+                        response = kv.get("response", "n").lower()
+                        if response == "y":
+                            # Swap colors and turn
+                            my_color, opp_color = opp_color, my_color
+                            turn = my_color  # Turn goes to the player who requested swap (host)
+                            status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                        else:
+                            status = f"[SWAP] {opp_name} declined swap request."
+                        with render_lock:
+                            render(status)
+                        response_received = True
+                    else:
+                        # Handle other commands normally
+                        q_in.put(l)  # Put back for normal processing
+                        time.sleep(0.1)
+                except queue.Empty:
+                    status = "[SWAP] Request timeout. Opponent did not respond."
+                    with render_lock:
+                        render(status)
+                    response_received = True
             continue
         if parsed == "/restart":
             if game_over:
@@ -897,15 +961,29 @@ def run_join(host: str, port: int, name: str):
                 if cmd == "MATCH":
                     my_color = kv.get("color", "X")
                     status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
+                    # If this is after a swap, update status
+                    if pending_request == "swap":
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                        pending_request = None
                     with render_lock:
                         render()
-                elif cmd == "SWAP":
-                    if my_color:
-                        my_color = "O" if my_color == "X" else "X"
-                        turn = my_color
-                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
-                        with render_lock:
-                            render()
+                elif cmd == "SWAP_REQUEST":
+                    if game_started:
+                        ls.send_line(fmt("ERR", code="GAME_STARTED", msg="Cannot swap after game started"))
+                        continue
+                    pending_request = "swap"
+                    status = f"[REQUEST] Host wants to SWAP colors. Type 'y' to accept or 'n' to decline: "
+                    with render_lock:
+                        render()
+                elif cmd == "SWAP_RESPONSE":
+                    response = kv.get("response", "n").lower()
+                    if response == "y":
+                        # Color and turn will be updated by MATCH and TURN messages
+                        status = "[SWAP] Swap accepted. Waiting for color update..."
+                    else:
+                        status = "[SWAP] Host declined swap request."
+                    with render_lock:
+                        render()
                 elif cmd == "TURN":
                     turn = kv.get("color")
                     with render_lock:
@@ -1033,16 +1111,37 @@ def run_join(host: str, port: int, name: str):
                         cmd, kv = parse_line(l)
                         if cmd == "MATCH":
                             my_color = kv.get("color", "X")
-                            status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
+                            # Check if this is after a swap
+                            if pending_request == "swap":
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                                pending_request = None
+                            else:
+                                status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
                             with render_lock:
                                 render()
-                        elif cmd == "SWAP":
-                            if my_color:
+                        elif cmd == "SWAP_REQUEST":
+                            if game_started:
+                                ls.send_line(fmt("ERR", code="GAME_STARTED", msg="Cannot swap after game started"))
+                                print("> ", end="", flush=True)
+                                print(input_buffer, end="", flush=True)
+                                continue
+                            pending_request = "swap"
+                            status = f"[REQUEST] Host wants to SWAP colors. Type 'y' to accept or 'n' to decline: "
+                            with render_lock:
+                                render()
+                            print("> ", end="", flush=True)
+                            print(input_buffer, end="", flush=True)
+                        elif cmd == "SWAP_RESPONSE":
+                            response = kv.get("response", "n").lower()
+                            if response == "y":
+                                # Swap colors and turn
                                 my_color = "O" if my_color == "X" else "X"
-                                turn = my_color
-                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
-                                with render_lock:
-                                    render()
+                                turn = my_color  # Turn goes to the player who requested swap
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                            else:
+                                status = "[SWAP] Host declined swap request."
+                            with render_lock:
+                                render()
                             print("> ", end="", flush=True)
                             print(input_buffer, end="", flush=True)
                         elif cmd == "TURN":
@@ -1146,13 +1245,18 @@ def run_join(host: str, port: int, name: str):
                         cmd, kv = parse_line(l)
                         if cmd == "MATCH":
                             my_color = kv.get("color", "X")
-                            status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
+                            # Check if this is after a swap
+                            if pending_request == "swap":
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
+                                pending_request = None
+                            else:
+                                status = f"[MATCH] You are {'O (first)' if my_color=='O' else 'X (second)'}"
                             with render_lock:
                                 render()
                         elif cmd == "SWAP":
                             if my_color:
                                 my_color = "O" if my_color == "X" else "X"
-                                turn = my_color
+                                # Turn will be set by TURN message that follows
                                 status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
                                 with render_lock:
                                     render()
@@ -1196,13 +1300,29 @@ def run_join(host: str, port: int, name: str):
                             status = f"[CHAT] {kv.get('from','?')}: {kv.get('text','')}"
                             with render_lock:
                                 render()
-                        elif cmd == "SWAP":
-                            if my_color:
+                        elif cmd == "SWAP_REQUEST":
+                            if game_started:
+                                ls.send_line(fmt("ERR", code="GAME_STARTED", msg="Cannot swap after game started"))
+                                continue
+                            pending_request = "swap"
+                            status = f"[REQUEST] Host wants to SWAP colors. Type 'y' to accept or 'n' to decline: "
+                            with render_lock:
+                                render()
+                        elif cmd == "SWAP_RESPONSE":
+                            response = kv.get("response", "n").lower()
+                            if response == "y":
+                                # Swap colors and turn
                                 my_color = "O" if my_color == "X" else "X"
-                                turn = my_color
-                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}."
-                                with render_lock:
-                                    render()
+                                turn = my_color  # Turn goes to the player who requested swap
+                                status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                            else:
+                                status = "[SWAP] Host declined swap request."
+                            with render_lock:
+                                render()
+                        elif cmd == "TURN":
+                            turn = kv.get("color")
+                            with render_lock:
+                                render()
                         elif cmd == "RESTART_REQUEST":
                             pending_request = "restart"
                             status = f"[REQUEST] Host wants to RESTART. Type 'y' to accept or 'n' to decline: "
@@ -1225,7 +1345,16 @@ def run_join(host: str, port: int, name: str):
             s_lower = s.strip().lower()
             if s_lower in ("y", "yes", "n", "no"):
                 response = "y" if s_lower in ("y", "yes") else "n"
-                if pending_request == "restart":
+                if pending_request == "swap":
+                    ls.send_line(fmt("SWAP_RESPONSE", response=response))
+                    if response == "y":
+                        # Swap colors and turn
+                        my_color = "O" if my_color == "X" else "X"
+                        turn = "O" if my_color == "X" else "X"  # Turn goes to the player who requested swap (host)
+                        status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                    else:
+                        status = "[SWAP] You declined swap request."
+                elif pending_request == "restart":
                     ls.send_line(fmt("RESTART_RESPONSE", response=response))
                     if response == "y":
                         reset_game()
@@ -1276,10 +1405,43 @@ def run_join(host: str, port: int, name: str):
                 with render_lock:
                     render()
                 continue
-            ls.send_line(fmt("SWAP"))
+            ls.send_line(fmt("SWAP_REQUEST"))
             status = "[SWAP] Request sent to host. Waiting for response..."
             with render_lock:
                 render()
+            # Wait for response
+            response_received = False
+            while not response_received:
+                try:
+                    l = q_in.get(timeout=30)  # 30 second timeout
+                    if l is None:
+                        status = "[DISCONNECTED] Host left."
+                        game_over = True
+                        with render_lock:
+                            render()
+                        break
+                    cmd, kv = parse_line(l)
+                    if cmd == "SWAP_RESPONSE":
+                        response = kv.get("response", "n").lower()
+                        if response == "y":
+                            # Swap colors and turn
+                            my_color = "O" if my_color == "X" else "X"
+                            turn = my_color  # Turn goes to the player who requested swap
+                            status = f"[SWAP] Colors swapped. You are now {'O' if my_color=='O' else 'X'}. Turn: {turn}"
+                        else:
+                            status = "[SWAP] Host declined swap request."
+                        with render_lock:
+                            render()
+                        response_received = True
+                    else:
+                        # Handle other commands normally
+                        q_in.put(l)  # Put back for normal processing
+                        time.sleep(0.1)
+                except queue.Empty:
+                    status = "[SWAP] Request timeout. Host did not respond."
+                    with render_lock:
+                        render()
+                    response_received = True
             continue
         if parsed == "/restart":
             if game_over:
