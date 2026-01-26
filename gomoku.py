@@ -468,7 +468,16 @@ class GomokuSession(ABC):
                 else:
                     turn_indicator = ">>> OPP TURN <<<"
             else:
-                turn_indicator = "GAME OVER"
+                # 승리자 확인: 마지막 수를 둔 사람이 승리자
+                if self.state.move_history:
+                    last_move = self.state.move_history[-1]
+                    winner_color = last_move[2]  # (x, y, color)에서 color
+                    if winner_color == self.my_color:
+                        turn_indicator = "☆ YOU WON ☆"
+                    else:
+                        turn_indicator = "♨ YOU LOST ♨"
+                else:
+                    turn_indicator = "GAME OVER"
         
         print(f"{turn_indicator}   You: {you_stone}   Opponent: {opp_stone} ({self.opp_name})")
         
@@ -1396,6 +1405,11 @@ class PvCSession(GomokuSession):
         
         return True
 
+    def handle_command(self, cmd: str) -> bool:
+        if cmd == "/quit":
+            return False    
+        return super().handle_command(cmd)
+    
     # 부모 클래스의 handle_pending_request도 PvC에선 필요 없으므로 무시
     def handle_pending_request(self, s: str) -> bool:
         return False
