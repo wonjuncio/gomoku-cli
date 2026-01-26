@@ -1439,7 +1439,7 @@ def main():
     ap_pvc.add_argument(
         "--lvl", 
         type=int, 
-        default=2, 
+        default=3, 
         choices=range(1, 6),
         help="Set computer difficulty level (1-5)"
     )

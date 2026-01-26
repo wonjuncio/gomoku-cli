@@ -13,6 +13,19 @@ UI가 부담스러워 몰래 하려 만든 gomoku😏
 
 ## 사용법
 
+### Single Play
+```bash
+python gomoku.py pvc --lvl 3 [--renju/--no-renju]
+```
+- renju (옵션, default: True) - 렌주룰 적용 여부
+- lvl (난이도, default: 3)
+
+1. Easy   (Quick, but prone to mistakes)
+2. Normal (Balanced)
+3. Hard   (Smart)
+4. Expert (Very strong)
+5. Master (Maximum depth)
+
 ### 호스트 (서버)
 ```bash
 python gomoku.py host --port 33333 [--renju/--no-renju]
