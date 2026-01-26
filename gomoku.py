@@ -156,6 +156,12 @@ def board_to_text(board: List[List[str]]) -> str:
     out.append("")
     return "\n".join(out)
 
+def format_move(x: int, y: int) -> str:
+    if 1 <= x <= 15 and 1 <= y <= 15:
+        col = chr(ord("A") + x - 1)
+        return f"{x}, {y} ({col}{y})"
+    return f"{x}, {y}"
+
 def parse_move_input(s: str):
     s = s.strip()
     if not s:
@@ -919,7 +925,7 @@ class HostSession(GomokuSession):
             code, msg = err
             self.ls.send_line(fmt("ERR", code=code, msg=msg))
         
-        self.status = f"[OPP MOVE] {x},{y}"
+        self.status = f"[OPP MOVE] {format_move(x, y)}"
         with self.render_lock:
             self.render(self.status)
         return True
@@ -1050,7 +1056,7 @@ class HostSession(GomokuSession):
             code, msg = err
             self.status = f"[ERR] {code}: {msg}"
         else:
-            self.status = f"[YOU MOVE] {x},{y}"
+            self.status = f"[YOU MOVE] {format_move(x, y)}"
         with self.render_lock:
             self.render(self.status)
         return True
@@ -1139,7 +1145,7 @@ class GuestSession(GomokuSession):
             y = int(kv.get("y", "0"))
             color = kv.get("color", "?")
             self.state.apply_ok(x, y, color)
-            self.status = f"[MOVE] {color} -> {x},{y}"
+            self.status = f"[MOVE] {color} -> {format_move(x, y)}"
             with self.render_lock:
                 self.render(self.status)
         elif cmd == "ERR":
@@ -1259,7 +1265,7 @@ class GuestSession(GomokuSession):
             return False
         
         self.ls.send_line(fmt("MOVE", x=str(x), y=str(y)))
-        self.status = f"[SENT] MOVE {x},{y}"
+        self.status = f"[SENT] MOVE {format_move(x, y)}"
         with self.render_lock:
             self.render(self.status)
         return True
@@ -1267,14 +1273,14 @@ class GuestSession(GomokuSession):
 # ---------------- PvC Session ----------------
 
 class PvCSession(GomokuSession):
-    def __init__(self, renju_rules: bool = True):
+    def __init__(self, renju_rules: bool = True, lvl: int = 2):
         super().__init__()
         self.state.renju_rules = renju_rules
         self.my_color = "O"
         self.opp_color = "X"
         self.my_name = "Player"
         self.opp_name = "Computer"
-        self.ai = GomokuAI(self.opp_color)
+        self.ai = GomokuAI(self.opp_color, lvl)
 
     def setup_connection(self) -> bool:
         print("[PvC] Local game starting...")
@@ -1314,7 +1320,7 @@ class PvCSession(GomokuSession):
             with self.render_lock: self.render(self.status)
             return False
 
-        self.status = f"[YOU] {x}, {y}"
+        self.status = f"[YOU] {format_move(x, y)}"
         with self.render_lock: self.render(self.status)
 
         # 2. 게임 안 끝났으면 AI 턴 실행
@@ -1333,7 +1339,7 @@ class PvCSession(GomokuSession):
         if move:
             ax, ay = move
             self.handle_move(ax, ay, self.opp_color)
-            self.status = f"[AI] {ax}, {ay}"
+            self.status = f"[AI] {format_move(ax, ay)}"
         
         with self.render_lock:
             self.render(self.status)
@@ -1399,17 +1405,18 @@ class PvCSession(GomokuSession):
 
 # ---------------- Wrapper functions for backward compatibility ----------------
 
-def run_host(port: int, renju_rules: bool = True, pvc: bool = False):
+def run_host(port: int, renju_rules: bool = True):
     """Run as host"""
-    if pvc:
-        session = PvCSession(renju_rules)
-    else:
-        session = HostSession(port, renju_rules)
+    session = HostSession(port, renju_rules)
     session.run()
 
 def run_join(host: str, port: int, name: str):
     """Run as guest"""
     session = GuestSession(host, port, name)
+    session.run()
+
+def run_pvc(renju_rules: bool = True, lvl: int = 2):
+    session = PvCSession(renju_rules, lvl)
     session.run()
 
 # ---------------- Main ----------------
@@ -1421,18 +1428,28 @@ def main():
     ap_host = sub.add_parser("host")
     ap_host.add_argument("--port", type=int, default=33333)
     ap_host.add_argument("--renju", action=argparse.BooleanOptionalAction, default=True, help="Enable renju rules (default: True)")
-    ap_host.add_argument("--pvc", action=argparse.BooleanOptionalAction, default=False, help="Enable pvc mode (default: False)")
-
 
     ap_join = sub.add_parser("join")
     ap_join.add_argument("--host", required=True)
     ap_join.add_argument("--port", type=int, default=33333)
     ap_join.add_argument("--name", default="Guest")
 
+    ap_pvc = sub.add_parser("pvc")
+    ap_pvc.add_argument("--renju", action=argparse.BooleanOptionalAction, default=True, help="Enable renju rules (default: True)")
+    ap_pvc.add_argument(
+        "--lvl", 
+        type=int, 
+        default=2, 
+        choices=range(1, 6),
+        help="Set computer difficulty level (1-5)"
+    )
+
     args = ap.parse_args()
 
     if args.mode == "host":
-        run_host(args.port, args.renju, args.pvc)
+        run_host(args.port, args.renju)
+    elif args.mode == "pvc":
+        run_pvc(args.renju, args.lvl)
     else:
         run_join(args.host, args.port, args.name)
 
