@@ -21,6 +21,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Callable
 
+from computer import GomokuAI
+
 # Windows non-blocking input
 if os.name == "nt":
     import msvcrt
@@ -1262,11 +1264,147 @@ class GuestSession(GomokuSession):
             self.render(self.status)
         return True
 
+# ---------------- PvC Session ----------------
+
+class PvCSession(GomokuSession):
+    def __init__(self, renju_rules: bool = True):
+        super().__init__()
+        self.state.renju_rules = renju_rules
+        self.my_color = "O"
+        self.opp_color = "X"
+        self.my_name = "Player"
+        self.opp_name = "Computer"
+        self.ai = GomokuAI(self.opp_color)
+
+    def setup_connection(self) -> bool:
+        print("[PvC] Local game starting...")
+        self.state.turn = "O"
+        return True
+
+    def start_receiver_thread(self):
+        pass
+
+    def process_incoming_messages(self) -> bool:
+        return True
+
+    def send_message(self, msg: str):
+        pass
+
+    def broadcast_state(self):
+        pass
+
+    def handle_move(self, x: int, y: int, color: str) -> Tuple[bool, Optional[Tuple[str, str]]]:
+        ok, err = self.state.apply_move(x, y, color)
+        return ok, err
+
+    def process_message(self, line: str) -> bool:
+        return True
+
+    def _on_message_during_input(self, line: str) -> bool:
+        return False
+
+    def _handle_move_input(self, coords: Tuple[int, int]) -> bool:
+        x, y = coords
+        
+        # 1. 플레이어 턴 처리
+        ok, err = self.handle_move(x, y, self.my_color)
+        if not ok:
+            code, msg = err
+            self.status = f"[ERR] {code}: {msg}"
+            with self.render_lock: self.render(self.status)
+            return False
+
+        self.status = f"[YOU] {x}, {y}"
+        with self.render_lock: self.render(self.status)
+
+        # 2. 게임 안 끝났으면 AI 턴 실행
+        if not self.state.game_over:
+            self._execute_ai_turn()
+            
+        return True
+
+    def _execute_ai_turn(self):
+        self.status = "AI is thinking..."
+        with self.render_lock: self.render(self.status)
+        
+        time.sleep(0.5)
+        
+        move = self.ai.get_move(self.state.board)
+        if move:
+            ax, ay = move
+            self.handle_move(ax, ay, self.opp_color)
+            self.status = f"[AI] {ax}, {ay}"
+        
+        with self.render_lock:
+            self.render(self.status)
+            
+    def _handle_restart_command(self) -> bool:
+        self.state.reset()
+        self.status = "[RESTART] Game reset. Your turn (O)!"
+        with self.render_lock:
+            self.render(self.status)
+        return True
+
+    def _handle_undo_command(self) -> bool:
+        """무르기: AI의 수와 나의 수를 모두 취소 (2수 무르기)"""
+        if not self.state.game_started or len(self.state.move_history) == 0:
+            self.status = "[ERR] No moves to undo."
+            with self.render_lock: self.render(self.status)
+            return True
+
+        undo_count = 2 if len(self.state.move_history) >= 2 else 1
+        
+        for _ in range(undo_count):
+            if self.state.move_history:
+                last_move = self.state.move_history[-1]
+                self.state.undo_last_move(last_move[2])
+
+        self.status = f"[UNDO] Reverted {undo_count} move(s)."
+        with self.render_lock:
+            self.render(self.status)
+        return True
+
+    def _handle_swap_command(self) -> bool:
+        if self.state.game_started:
+            self.status = "[ERR] Cannot swap after game started."
+            with self.render_lock: self.render(self.status)
+            return True
+
+        # 색상 교체
+        self.my_color, self.opp_color = self.opp_color, self.my_color
+        self.ai.color = self.opp_color
+        self.state.swap_colors() # 혹시 돌이 있다면 교체
+        
+        # 선공(O) 설정
+        self.state.turn = "O"
+        
+        self.status = f"[SWAP] You are now {self.my_color}. Turn: {self.state.turn}"
+        
+        # 만약 AI가 선공(O)이 되었다면 즉시 첫 수 실행
+        if self.opp_color == "O":
+            self.render(self.status)
+            self._execute_ai_turn()
+        else:
+            with self.render_lock:
+                self.render(self.status)
+        
+        return True
+
+    # 부모 클래스의 handle_pending_request도 PvC에선 필요 없으므로 무시
+    def handle_pending_request(self, s: str) -> bool:
+        return False
+
+    def cleanup(self):
+        print("[PvC] Session closed.")
+
 # ---------------- Wrapper functions for backward compatibility ----------------
 
-def run_host(port: int, renju_rules: bool = True):
+def run_host(port: int, renju_rules: bool = True, pvc: bool = False):
     """Run as host"""
-    session = HostSession(port, renju_rules)
+    if pvc:
+        session = PvCSession(renju_rules)
+    else:
+        session = HostSession(port, renju_rules)
     session.run()
 
 def run_join(host: str, port: int, name: str):
@@ -1283,6 +1421,8 @@ def main():
     ap_host = sub.add_parser("host")
     ap_host.add_argument("--port", type=int, default=33333)
     ap_host.add_argument("--renju", action=argparse.BooleanOptionalAction, default=True, help="Enable renju rules (default: True)")
+    ap_host.add_argument("--pvc", action=argparse.BooleanOptionalAction, default=False, help="Enable pvc mode (default: False)")
+
 
     ap_join = sub.add_parser("join")
     ap_join.add_argument("--host", required=True)
@@ -1292,7 +1432,7 @@ def main():
     args = ap.parse_args()
 
     if args.mode == "host":
-        run_host(args.port, args.renju)
+        run_host(args.port, args.renju, args.pvc)
     else:
         run_join(args.host, args.port, args.name)
 
