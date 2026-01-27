@@ -153,6 +153,16 @@ class GomokuAI:
                 return move
             board[y][x] = "."
         
+        # 상대가 닫힌 4(반열린 4)를 만들 수 있는 수 찾기
+        closed_four_moves = self._find_closed_four_moves(board, candidates, self.opponent)
+        if closed_four_moves:
+            return closed_four_moves[0]
+        
+        # 상대가 띄워진 4(broken four)를 만들 수 있는 수 찾기
+        broken_four_moves = self._find_broken_four_moves(board, candidates, self.opponent)
+        if broken_four_moves:
+            return broken_four_moves[0]
+        
         return None
     
     def _has_open_four(self, board: List[List[str]], color: str) -> bool:
@@ -186,19 +196,117 @@ class GomokuAI:
                     
                     # 4개 연속이고 양쪽이 모두 열려있는지 확인
                     if count == 4:
-                        # 앞쪽 끝 확인
+                        # 앞쪽 끝 확인 (while이 끝난 후 nx, ny는 첫 비-color 칸)
                         forward_open = (0 <= nx < self.board_size and 0 <= ny < self.board_size and 
                                        board[ny][nx] == ".")
-                        # 뒤쪽 끝 확인
-                        final_back_x, final_back_y = back_x + dx, back_y + dy
-                        backward_open = (0 <= final_back_x < self.board_size and 
-                                        0 <= final_back_y < self.board_size and 
-                                        board[final_back_y][final_back_x] == ".")
+                        # 뒤쪽 끝 확인 (while이 끝난 후 back_x, back_y는 첫 비-color 칸)
+                        backward_open = (0 <= back_x < self.board_size and 0 <= back_y < self.board_size and 
+                                        board[back_y][back_x] == ".")
                         
                         if forward_open and backward_open:
                             return True
         
         return False
+    
+    def _find_closed_four_moves(self, board: List[List[str]], candidates: List[Tuple[int, int]], color: str) -> List[Tuple[int, int]]:
+        """닫힌 4(반열린 4)를 만들 수 있는 수 찾기"""
+        closed_four_moves = []
+        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
+        
+        for move in candidates:
+            y, x = move
+            board[y][x] = color
+            
+            for dx, dy in directions:
+                count = 1
+                # 앞쪽으로 연속 확인
+                nx, ny = x + dx, y + dy
+                while (0 <= nx < self.board_size and 0 <= ny < self.board_size and 
+                       board[ny][nx] == color):
+                    count += 1
+                    nx += dx
+                    ny += dy
+                
+                # 뒤쪽으로 연속 확인
+                back_x, back_y = x - dx, y - dy
+                while (0 <= back_x < self.board_size and 
+                       0 <= back_y < self.board_size and 
+                       board[back_y][back_x] == color):
+                    count += 1
+                    back_x -= dx
+                    back_y -= dy
+                
+                # 4개 연속이고 한쪽만 열려있는지 확인 (반열린 4)
+                if count == 4:
+                    forward_open = (0 <= nx < self.board_size and 0 <= ny < self.board_size and 
+                                   board[ny][nx] == ".")
+                    backward_open = (0 <= back_x < self.board_size and 0 <= back_y < self.board_size and 
+                                    board[back_y][back_x] == ".")
+                    
+                    # 한쪽만 열려있으면 닫힌 4 (반열린 4)
+                    if (forward_open and not backward_open) or (not forward_open and backward_open):
+                        closed_four_moves.append(move)
+                        break
+            
+            board[y][x] = "."
+        
+        return closed_four_moves
+    
+    def _find_broken_four_moves(self, board: List[List[str]], candidates: List[Tuple[int, int]], color: str) -> List[Tuple[int, int]]:
+        """띄워진 4(broken four)를 만들 수 있는 수 찾기"""
+        broken_four_moves = []
+        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
+        
+        for move in candidates:
+            y, x = move
+            board[y][x] = color
+            
+            for dx, dy in directions:
+                # 윈도우 방식으로 띄워진 4 확인 (예: X X . X X 또는 X . X X X)
+                # 현재 위치를 중심으로 양쪽 확인
+                left_count = 0
+                right_count = 0
+                gap_pos = None
+                
+                # 왼쪽으로 확인
+                for i in range(1, 5):
+                    check_x = x - i * dx
+                    check_y = y - i * dy
+                    if (0 <= check_x < self.board_size and 0 <= check_y < self.board_size):
+                        if board[check_y][check_x] == color:
+                            left_count += 1
+                        elif board[check_y][check_x] == "." and gap_pos is None:
+                            gap_pos = i
+                            break
+                        else:
+                            break
+                    else:
+                        break
+                
+                # 오른쪽으로 확인
+                for i in range(1, 5):
+                    check_x = x + i * dx
+                    check_y = y + i * dy
+                    if (0 <= check_x < self.board_size and 0 <= check_y < self.board_size):
+                        if board[check_y][check_x] == color:
+                            right_count += 1
+                        elif board[check_y][check_x] == "." and gap_pos is None:
+                            gap_pos = -i
+                            break
+                        else:
+                            break
+                    else:
+                        break
+                
+                # 띄워진 4: 총 4개 돌이고 중간에 빈칸이 하나
+                total_count = left_count + right_count + 1  # +1은 현재 위치
+                if total_count == 4 and gap_pos is not None:
+                    broken_four_moves.append(move)
+                    break
+            
+            board[y][x] = "."
+        
+        return broken_four_moves
 
     def _get_candidates(self, board: List[List[str]]) -> List[Tuple[int, int]]:
         """비어있는 칸 중 기존 돌의 인접한 구역과 전술적으로 중요한 위치 탐색"""
@@ -217,15 +325,14 @@ class GomokuAI:
                             ny, nx = y + dy, x + dx
                             if 0 <= ny < self.board_size and 0 <= nx < self.board_size and board[ny][nx] == ".":
                                 candidates.add((ny, nx))
-                    # 거리 2: 8방향 모두 확인 (점프 위협)
-                    # 체스보드 거리(맨하탄 거리) 2인 모든 위치 확인
+                    # 거리 2: 체비셰프 거리 2인 모든 위치 확인 (대각선 포함)
                     for dy in range(-2, 3):
                         for dx in range(-2, 3):
                             if dx == 0 and dy == 0:
                                 continue
-                            # 거리 1은 이미 처리했으므로 거리 2만 확인 (맨하탄 거리 2)
-                            manhattan_dist = abs(dx) + abs(dy)
-                            if manhattan_dist == 2:
+                            # 거리 1은 이미 처리했으므로 거리 2만 확인 (체비셰프 거리 2)
+                            chebyshev_dist = max(abs(dx), abs(dy))
+                            if chebyshev_dist == 2:
                                 ny, nx = y + dy, x + dx
                                 if 0 <= ny < self.board_size and 0 <= nx < self.board_size and board[ny][nx] == ".":
                                     candidates.add((ny, nx))
