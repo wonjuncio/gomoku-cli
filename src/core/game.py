@@ -1,13 +1,11 @@
-# game.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import List, Optional
 
-from board import Board, Player, Position
-from move import Move, MoveResult
-from gamestate import GameState
-from movevalidator import MoveValidator
+from src.core.board import Board, Player, Position
+from src.core.move import Move, MoveResult
+from src.core.gamestate import GameState
+from src.core.movevalidator import MoveValidator
 
 
 class Game:

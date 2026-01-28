@@ -1,9 +1,78 @@
 from typing import List, Tuple, Iterator, Optional, Set
-from src.core.board import Player, Position
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
 
+class Player(Enum):
+    """Player constants."""
+    EMPTY = 0
+    BLACK = 1
+    WHITE = 2
+
+    def symbol(self) -> str:
+        return {0: ".", 1: "O", 2: "X"}[self.value]
+    
+    def opponent(self) -> "Player":
+        if self == Player.BLACK:
+            return Player.WHITE
+        if self == Player.WHITE:
+            return Player.BLACK
+        return Player.EMPTY
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class Position:
+    """
+    Immutable position on the board.
+    Coordinates are 1-based: (1..15, 1..15)
+    """
+    x: int
+    y: int
+
+    def __post_init__(self):
+        if not isinstance(self.x, int) or not isinstance(self.y, int):
+            raise TypeError("Position coordinates must be integers")
+        if self.x < 1 or self.y < 1:
+            raise ValueError("Position coordinates must be >= 1")
+
+    def __str__(self) -> str:
+        """Return human-readable form like H8."""
+        col = chr(ord("A") + self.x - 1)
+        return f"{col}{self.y}"
+
+    @staticmethod
+    def from_str(s: str) -> "Position":
+        """
+        Parse from 'H8' or 'h8' or '8 8' format.
+        """
+        s = s.strip().upper()
+
+        # format: "H8"
+        if len(s) >= 2 and s[0].isalpha():
+            col = s[0]
+            if not ("A" <= col <= "O"):
+                raise ValueError("Column must be between A and O")
+            x = ord(col) - ord("A") + 1
+            y_part = s[1:]
+            if not y_part.isdigit():
+                raise ValueError("Row must be a number")
+            y = int(y_part)
+            return Position(x, y)
+
+        # format: "8 8"
+        parts = s.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return Position(int(parts[0]), int(parts[1]))
+
+        raise ValueError(f"Invalid position format: '{s}'")
+
+    def in_bounds(self, size: int) -> bool:
+        """Check if this position is within board size."""
+        return 1 <= self.x <= size and 1 <= self.y <= size
+    
 class Board:
     """
     Represents the game board state.
@@ -210,72 +279,13 @@ class Board:
                 lines.append("".join(row_syms))
         return "\n".join(lines)
     
-class Player(Enum):
-    """Player constants."""
-    EMPTY = 0
-    BLACK = 1
-    WHITE = 2
-
-    def symbol(self) -> str:
-        return {0: ".", 1: "O", 2: "X"}[self.value]
-    
-    def opponent(self) -> "Player":
-        if self == Player.BLACK:
-            return Player.WHITE
-        if self == Player.WHITE:
-            return Player.BLACK
-        return Player.EMPTY
-
-    def __str__(self) -> str:
-        return self.value
-
-
-@dataclass(frozen=True)
-class Position:
-    """
-    Immutable position on the board.
-    Coordinates are 1-based: (1..15, 1..15)
-    """
-    x: int
-    y: int
-
-    def __post_init__(self):
-        if not isinstance(self.x, int) or not isinstance(self.y, int):
-            raise TypeError("Position coordinates must be integers")
-        if self.x < 1 or self.y < 1:
-            raise ValueError("Position coordinates must be >= 1")
-
-    def __str__(self) -> str:
-        """Return human-readable form like H8."""
-        col = chr(ord("A") + self.x - 1)
-        return f"{col}{self.y}"
-
-    @staticmethod
-    def from_str(s: str) -> "Position":
-        """
-        Parse from 'H8' or 'h8' or '8 8' format.
-        """
-        s = s.strip().upper()
-
-        # format: "H8"
-        if len(s) >= 2 and s[0].isalpha():
-            col = s[0]
-            if not ("A" <= col <= "O"):
-                raise ValueError("Column must be between A and O")
-            x = ord(col) - ord("A") + 1
-            y_part = s[1:]
-            if not y_part.isdigit():
-                raise ValueError("Row must be a number")
-            y = int(y_part)
-            return Position(x, y)
-
-        # format: "8 8"
-        parts = s.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            return Position(int(parts[0]), int(parts[1]))
-
-        raise ValueError(f"Invalid position format: '{s}'")
-
-    def in_bounds(self, size: int) -> bool:
-        """Check if this position is within board size."""
-        return 1 <= self.x <= size and 1 <= self.y <= size
+    def to_cli(self) -> str:
+        letters = [chr(ord("A") + i) for i in range(self._size)]
+        lines = []
+        lines.append("    " + " ".join(letters))
+        for y in range(1, self._size + 1):
+            row = []
+            for x in range(1, self._size + 1):
+                row.append(self._grid[y - 1][x - 1].symbol())
+            lines.append(f"{str(y).rjust(3)}  " + " ".join(row))
+        return "\n".join(lines)

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, List
+from typing import List
 
-from board import Board, Position, Player
-from move import Move, MoveResult
-from gamestate import GameState
+from src.core.board import Board, Position, Player
+from src.core.move import Move, MoveResult
+from src.core.gamestate import GameState
 
 
 @dataclass
