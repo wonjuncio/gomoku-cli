@@ -139,22 +139,12 @@ class Game:
         if not self.move_history:
             return False
 
-        last = self.move_history.pop()
-        pos = last.position
+        last_move = self.move_history.pop()
+        pos = last_move.position
 
-        # NOTE: Ideally Board exposes an `unplace()` method.
-        # For now we do a minimal internal revert.
-        r, c = (pos.y - 1, pos.x - 1)
-        self.board._grid[r][c] = Player.EMPTY  # type: ignore[attr-defined]
-        self.board._moves -= 1  # type: ignore[attr-defined]
-
-        # restore turn to the player who made the undone move
-        self.current_player = last.player
-
-        # clear winner (undo may invalidate previous win)
+        self.board.unplace(pos)
+        self.current_player = last_move.player
         self.winner = None
-
-        # update last_move
         self.last_move = self.move_history[-1].position if self.move_history else None
         return True
 

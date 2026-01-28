@@ -70,6 +70,24 @@ class Board:
             raise ValueError(f"Cell occupied at {pos}")
         self._grid[r][c] = player
         self._moves += 1
+        
+    def unplace(self, pos: Position) -> None:
+        """
+        Remove a stone at pos (set to EMPTY).
+
+        Raises:
+            ValueError if the cell is already empty.
+        """
+        if not self.in_bounds(pos):
+            raise ValueError(f"Out of bounds: {pos}")
+
+        r, c = self._idx(pos)
+        if self._grid[r][c] == Player.EMPTY:
+            raise ValueError(f"Cell already empty at {pos}")
+
+        self._grid[r][c] = Player.EMPTY
+        self._moves -= 1
+
 
     def clear(self) -> None:
         """Reset board to empty."""
