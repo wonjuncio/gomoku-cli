@@ -119,7 +119,7 @@ class HostController(BaseController):
         self.transport.send(NetMessage(MsgType.TURN, {"color": str(self.game.current_player.value)}))
         self._send_state_snapshot()
 
-        self.view.set_message(Message(MessageType.SWAP, "Connected. Game ready."))
+        self.view.set_info("Connected. Game ready.")
         self._dirty = True
 
     def on_stop(self) -> None:
@@ -212,6 +212,10 @@ class HostController(BaseController):
             return
 
         if command.type == CommandType.SWAP:
+            if not self.game.board.is_empty_board():
+                self.view.set_error("Swap is only allowed before the game starts.")
+                self._dirty = True
+                return
             self._request_to_guest(RequestKind.SWAP)
             return
 
@@ -251,7 +255,7 @@ class HostController(BaseController):
         self._broadcast_apply(pos, self._you_color)
 
         # UI message
-        self.view.set_message(Message(MessageType.SWAP, f"[YOU MOVE] {pos.x}, {pos.y} ({pos})"))
+        self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=True)
 
         # Winner / turn
         self._broadcast_turn_or_win()
@@ -282,7 +286,7 @@ class HostController(BaseController):
             return
 
         self._broadcast_apply(pos, self.you_color.opponent())
-        self.view.set_message(Message(MessageType.SWAP, f"[OPP MOVE] {pos.x}, {pos.y} ({pos})"))
+        self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=False)
         self._broadcast_turn_or_win()
         self._dirty = True
 

@@ -16,6 +16,9 @@ from src.core.game import Game
 
 class MessageType(Enum):
     ERR = "ERR"
+    INFO = "INFO"   # generic (moves, sync, connected) — [SWAP] only for actual swap
+    YOU_MOVE = "YOU MOVE"
+    OPP_MOVE = "OPP MOVE"
     SWAP = "SWAP"
     UNDO = "UNDO"
     RESTART = "RESTART"
@@ -88,6 +91,16 @@ class CliView:
 
     def set_error(self, text: str) -> None:
         self._message = Message(MessageType.ERR, text)
+
+    def set_info(self, text: str = "") -> None:
+        self._message = Message(MessageType.INFO, text) if text else None
+
+    def set_move(self, text: str = "", is_you: bool = False) -> None:
+        if text:
+            t = MessageType.YOU_MOVE if is_you else MessageType.OPP_MOVE
+            self._message = Message(t, text)
+        else:
+            self._message = None
 
     def set_swap(self, text: str = "") -> None:
         self._message = Message(MessageType.SWAP, text)

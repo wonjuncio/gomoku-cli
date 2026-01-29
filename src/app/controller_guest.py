@@ -115,7 +115,7 @@ class GuestController(BaseController):
         # Ask for state snapshot right away (host may also send it automatically)
         self.transport.send(NetMessage(MsgType.STATE, {}))
 
-        self.view.set_message(Message(MessageType.SWAP, "Connected. Waiting for host..."))
+        self.view.set_info("Connected. Waiting for host...")
         self._dirty = True
 
     def on_stop(self) -> None:
@@ -226,6 +226,10 @@ class GuestController(BaseController):
             return
 
         if command.type == CommandType.SWAP:
+            if not self.game.board.is_empty_board():
+                self.view.set_error("Swap is only allowed before the game starts.")
+                self._dirty = True
+                return
             self._request_to_host(RequestKind.SWAP)
             return
 
@@ -266,7 +270,7 @@ class GuestController(BaseController):
             return
 
         self.transport.send(NetMessage(MsgType.MOVE, {"x": str(pos.x), "y": str(pos.y)}))
-        self.view.set_message(Message(MessageType.SWAP, f"[YOU MOVE] {pos.x}, {pos.y} ({pos}) [sent]"))
+        self.view.set_move(f"{pos.x}, {pos.y} ({pos}) [sent]", is_you=True)
         self._dirty = True
 
     # ============================================================
@@ -294,19 +298,20 @@ class GuestController(BaseController):
         self.game.last_move = pos
 
         if color == self.you_color:
-            self.view.set_message(Message(MessageType.SWAP, f"[YOU MOVE] {pos.x}, {pos.y} ({pos})"))
+            self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=True)
         else:
-            self.view.set_message(Message(MessageType.SWAP, f"[OPP MOVE] {pos.x}, {pos.y} ({pos})"))
+            self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=False)
         self._dirty = True
 
     def _handle_turn(self, msg: NetMessage) -> None:
         self.game.current_player = Player(msg.get_int("color", Player.BLACK.value))
+        self.view.set_message(None)  # clear stale [SWAP] / request message
         self._dirty = True
 
     def _handle_win(self, msg: NetMessage) -> None:
         self.game.winner = Player(msg.get_int("color", Player.BLACK.value))
         # Winner line is shown by view state indicator; message can be generic
-        self.view.set_message(Message(MessageType.SWAP, "GAME OVER"))
+        self.view.set_info("GAME OVER")
         self._dirty = True
 
     # ============================================================
@@ -352,7 +357,7 @@ class GuestController(BaseController):
         self.game.winner = winner
         self._snapshot_mode = False
 
-        self.view.set_message(Message(MessageType.SWAP, "[SYNC] State updated."))
+        self.view.set_info("State updated.")
         self._dirty = True
 
     def _handle_match_update(self, msg: NetMessage) -> None:

@@ -138,7 +138,7 @@ class PvCController(BaseController):
             self._dirty = True
             return
 
-        self.view.set_message(Message(MessageType.SWAP, f"[OPP MOVE] {pos.x}, {pos.y} ({pos})"))
+        self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=False)
         self._ai_thinking = False
         self._dirty = True
 
@@ -194,7 +194,7 @@ class PvCController(BaseController):
             self._dirty = True
             return
 
-        self.view.set_message(Message(MessageType.SWAP, f"[YOU MOVE] {pos.x}, {pos.y} ({pos})"))
+        self.view.set_move(f"{pos.x}, {pos.y} ({pos})", is_you=True)
         self._dirty = True
 
     # ============================================================
