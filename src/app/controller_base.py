@@ -165,7 +165,8 @@ class BaseController(ABC):
             if self._dirty:
                 self._render()
 
-            # 4) poll input (non-blocking)
+            # 4) poll input (non-blocking). Short tick_sec in PvP so we wake up often
+            #    and process network events (e.g. opponent move) without ~1s delay.
             line = self._input.poll_line(timeout_sec=self.tick_sec)
             if line is None:
                 continue

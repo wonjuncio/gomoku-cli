@@ -43,7 +43,7 @@ class GuestController(BaseController):
         host: str,
         port: int,
         name: str = "Guest",
-        tick_sec: float = 1.0,
+        tick_sec: float = 0.2,
     ) -> None:
         self.host = host
         self.port = port

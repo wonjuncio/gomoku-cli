@@ -42,7 +42,7 @@ class HostController(BaseController):
         renju: bool = True,
         you_name: str = "Host",
         board_size: int = 15,
-        tick_sec: float = 1.0,
+        tick_sec: float = 0.2,
     ) -> None:
         self.port = port
         self.renju = renju
