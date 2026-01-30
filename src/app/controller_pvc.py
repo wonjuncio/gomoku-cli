@@ -8,14 +8,7 @@ from src.core.board import Player, Position
 from src.cli.commands import Command, CommandProcessor, CommandType
 from src.cli.view import CliView, Message, MessageType
 from src.core.game import Game
-
-# AI is in a separate file per your plan.
-# Expected interface (reference only):
-# class GomokuAI:
-#     def __init__(self, color: str, lvl: int = 2): ...
-#     def get_move(self, board: List[List[str]]) -> Optional[Tuple[int, int]]: ...
-# from src.ai.gomoku_ai import GomokuAI  # adjust import path to your project layout
-
+from src.ai.gomoku_ai import GomokuAI
 
 @dataclass
 class PvCConfig:

@@ -160,6 +160,16 @@ class Game:
             if self.can_move(pos):
                 valid.append(pos)
         return valid
+    
+    def copy(self) -> "Game":
+        new_game = Game(board_size=self.board.size, starting_player=self.starting_player, renju=self.validator.renju)
+        new_game.board = self.board.copy()
+        new_game.validator = MoveValidator(renju=self.validator.renju)
+        new_game.current_player = self.current_player
+        new_game.winner = self.winner
+        new_game.move_history = list(self.move_history)
+        new_game.last_move = self.last_move
+        return new_game
 
     # -------------------------
     # Reset
