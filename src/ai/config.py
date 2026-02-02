@@ -1,6 +1,18 @@
 from dataclasses import dataclass
 
 
+# Heuristic weights for evaluation (no capture in this project)
+WEIGHT_WIN = 50_000
+WEIGHT_FOUR = 5_000
+WEIGHT_THREE = 500
+WEIGHT_TWO = 50
+# Move count limits by depth (shallow = fewer moves for speed)
+MAX_MOVES_DEPTH_LOW = 12
+MAX_MOVES_DEPTH_HIGH = 18
+# Adjacent search distance for move generation
+SEARCH_DISTANCE = 2
+
+
 @dataclass(frozen=True)
 class AILevelConfig:
     max_depth: int

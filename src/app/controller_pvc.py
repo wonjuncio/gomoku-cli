@@ -196,12 +196,9 @@ class PvCController(BaseController):
 
     def _new_ai(self) -> GomokuAI:
         """
-        AI expects color as 'O' or 'X'.
-        Our Player mapping in this project:
-          BLACK.symbol() -> 'O'
-          WHITE.symbol() -> 'X'
+        AI expects Player enum.
         """
-        return GomokuAI(color=self._ai_color.symbol(), lvl=self.cfg.lvl)
+        return GomokuAI(player=self._ai_color, lvl=self.cfg.lvl)
 
     @property
     def you_color(self) -> Player:
@@ -223,23 +220,11 @@ class PvCController(BaseController):
 
     def _ai_choose_position(self) -> Optional[Position]:
         """
-        Ask AI for a move and convert to Position.
-
-        IMPORTANT:
-        AI's get_move(board) returns Optional[Tuple[int,int]].
-        We will interpret it as 0-based (row, col) by default, because that's common.
-        If your AI returns 0-based (x,y) or 1-based, adjust conversion here ONLY.
+        Ask AI for a move. AI's get_move(game) returns Optional[Position] (1-based x, y).
         """
-        board = self._board_as_symbols()
-        mv = self.ai.get_move(board)
-        if mv is None:
+        pos = self.ai.get_move(self.game)
+        if pos is None:
             return None
-
-        r, c = mv  # assume (row, col), 0-based
-        x = c + 1
-        y = r + 1
-
-        pos = Position(x, y)
 
         # If AI returned illegal pos, try a fallback: pick any valid move adjacent
         if not self.game.can_move(pos):

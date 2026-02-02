@@ -43,32 +43,6 @@ class Position:
         col = chr(ord("A") + self.x - 1)
         return f"{col}{self.y}"
 
-    @staticmethod
-    def from_str(s: str) -> "Position":
-        """
-        Parse from 'H8' or 'h8' or '8 8' format.
-        """
-        s = s.strip().upper()
-
-        # format: "H8"
-        if len(s) >= 2 and s[0].isalpha():
-            col = s[0]
-            if not ("A" <= col <= "O"):
-                raise ValueError("Column must be between A and O")
-            x = ord(col) - ord("A") + 1
-            y_part = s[1:]
-            if not y_part.isdigit():
-                raise ValueError("Row must be a number")
-            y = int(y_part)
-            return Position(x, y)
-
-        # format: "8 8"
-        parts = s.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            return Position(int(parts[0]), int(parts[1]))
-
-        raise ValueError(f"Invalid position format: '{s}'")
-
     def in_bounds(self, size: int) -> bool:
         """Check if this position is within board size."""
         return 1 <= self.x <= size and 1 <= self.y <= size
@@ -255,8 +229,10 @@ class Board:
 
     def step(self, pos: Position, dx: int, dy: int) -> Optional[Position]:
         """Return next position by (dx,dy) or None if out of bounds."""
-        nxt = Position(pos.x + dx, pos.y + dy)
-        return nxt if self.in_bounds(nxt) else None
+        nx, ny = pos.x + dx, pos.y + dy
+        if 1 <= nx <= self._size and 1 <= ny <= self._size:
+            return Position(nx, ny)
+        return None
 
     def count_in_direction(self, start: Position, player: Player, dx: int, dy: int) -> int:
         """
@@ -308,7 +284,7 @@ class Board:
     def to_cli(self) -> str:
         letters = [chr(ord("A") + i) for i in range(self._size)]
         lines = []
-        lines.append("    " + " ".join(letters))
+        lines.append("     " + " ".join(letters))
         for y in range(1, self._size + 1):
             row = []
             for x in range(1, self._size + 1):

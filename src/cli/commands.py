@@ -65,8 +65,9 @@ class CommandProcessor:
         return ", ".join(cmds)
 
     def help_text(self) -> str:
+        col_end = chr(ord("A") + self.board_size - 1)
         return (
-            "Input: 'x y' (e.g. 8 8) or 'H8' (A-O + 1-15).\n"
+            f"Input: 'x y' (e.g. 8 8) or 'H8' (A-{col_end} + 1-{self.board_size}).\n"
             f"Commands: {self.help_cmds}"
         )
 
@@ -109,34 +110,31 @@ class CommandProcessor:
         if expecting_yn:
             return ParseResult(error="Invalid input. Enter Y or N")
 
-        # move: "x y"
+        # move: "x y" (1..board_size, 1..board_size)
         parts = raw.split()
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             x, y = int(parts[0]), int(parts[1])
-            pos = Position(x, y)
-            if not self._in_bounds(pos):
-                return ParseResult(error=self._oob_msg(pos))
-            return ParseResult(position=pos)
+            if not self._is_in_bounds(x, y):
+                return ParseResult(error=self._oob_msg(x, y))
+            return ParseResult(position=Position(x, y))
 
-        # move: "H8" (A-O + 1-15)
+        # move: "H8" (A..col_for_size + 1..board_size)
         if len(raw) >= 2 and raw[0].isalpha():
             col = raw[0].upper()
             rest = raw[1:].strip()
             if rest.isdigit():
                 x = ord(col) - ord("A") + 1
                 y = int(rest)
-                pos = Position(x, y)
-                if not self._in_bounds(pos):
-                    return ParseResult(error=self._oob_msg(pos))
-                return ParseResult(position=pos)
+                if not self._is_in_bounds(x, y):
+                    return ParseResult(error=self._oob_msg(x, y))
+                return ParseResult(position=Position(x, y))
 
         return ParseResult(error="Invalid input. Use 'x y' or 'H8' or /help")
 
     # ---------- Helpers ----------
 
-    def _in_bounds(self, pos: Position) -> bool:
-        return 1 <= pos.x <= self.board_size and 1 <= pos.y <= self.board_size
-
-    def _oob_msg(self, pos: Position) -> str:
-        # A-O는 15 기준이지만, board_size가 바뀌어도 숫자로 안내
-        return f"Out of bounds: {pos.x}, {pos.y} (must be 1..{self.board_size})"
+    def _is_in_bounds(self, x: int, y: int) -> bool:
+        return 1 <= x <= self.board_size and 1 <= y <= self.board_size
+    
+    def _oob_msg(self, x: int, y: int) -> str:
+        return f"Out of bounds: {x}, {y} (must be 1..{self.board_size})"
